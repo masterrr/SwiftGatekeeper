@@ -1,17 +1,38 @@
-// The Swift Programming Language
-// https://docs.swift.org/swift-book
-
-
 import Foundation
 
-public struct SwiftGatekeeper {
+public class SwiftGatekeeper {
+    enum AccessState {
+        case allow
+        case deny
+    }
+
+    class User: Identifiable, Hashable {
+        let id: String
+        let name: String
+
+        init(id: String, name: String) {
+            self.id = id
+            self.name = name
+        }
+
+        static func == (lhs: User, rhs: User) -> Bool {
+            return lhs.id == rhs.id
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
+    }
+
     class Resource {
         let id: UUID = UUID()
         let name: String
-        let children: [Resource]
-        var parent: Resource?
+        var children: [Resource]
+        weak var parent: Resource?
+
+        var accessStates: [User.ID: AccessState] = [:]
         
-        init(name: String, children: [Resource]) {
+        init(name: String, children: [Resource] = []) {
             self.name = name
             self.children = children
             for child in children {
@@ -20,38 +41,60 @@ public struct SwiftGatekeeper {
         }
     }
 
-    func assembleSampleResources() -> Resource {
-        let child4 = Resource(name: "child4", children: [])
-        let child5 = Resource(name: "child5", children: [])
-        let child6 = Resource(name: "child6", children: [])
+    func getResource(id: UUID) -> Resource? {
+        return resources[id]
+    }
 
-        let child1 = Resource(name: "child1", children: [child4])
-        let child2 = Resource(name: "child2", children: [child5])
-        let child3 = Resource(name: "child3", children: [child6])
+    private var resources: [UUID: Resource] = [:]
+    private var users: [String: User] = [:]
+
+    func createResource(name: String, parentID: UUID?) -> UUID {
+        let newResource = Resource(name: name)
+        let newID = newResource.id
         
-        return Resource(name: "root", children: [child1, child2, child3])        
-    }
-
-    func printStructure(resource: Resource, indent: String = "") {
-        print("\(indent)\(resource.name)")
-        for child in resource.children {
-            printStructure(resource: child, indent: "\(indent)\(resource.name) - ")
+        if let parentID = parentID, let parent = resources[parentID] {
+            newResource.parent = parent
+            parent.children.append(newResource)
         }
+        
+        resources[newID] = newResource
+        return newID
     }
 
-    func checkAccess(resource: Resource, userId: String) -> Bool {
-        return true
+    func createUser(id: String, name: String) -> User {
+        let user = User(id: id, name: name)
+        users[id] = user
+        return user
     }
 
-    func grantAccess(resource: Resource, userId: String) -> Void {
-        // TODO: Implement
+    func setAccess(resourceID: UUID, userID: String, state: AccessState) {
+        guard let resource = resources[resourceID], let _ = users[userID] else {
+            return
+        }
+        resource.accessStates[userID] = state
     }
 
-    func revokeAccess(resource: Resource, userId: String) -> Void {
-        // TODO: Implement
-    }
+    func checkAccess(resourceID: UUID, userID: String) -> Bool {
+        guard let resource = resources[resourceID], let _ = users[userID] else {
+            return false
+        }
 
-    public func sampleTestInputCall() -> Void {
-        printStructure(resource: assembleSampleResources())
+        var currentResource: Resource? = resource
+        var explicitAllow = false
+
+        while let res = currentResource {
+            switch res.accessStates[userID] {
+            case .allow:
+                explicitAllow = true
+            case .deny:
+                return false
+            case .none:
+                // No explicit policy is set
+                // Parent expliciy deny affects children only
+                break
+            }
+            currentResource = res.parent
+        }
+        return explicitAllow
     }
 }
